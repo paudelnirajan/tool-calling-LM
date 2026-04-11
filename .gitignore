@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Training artifacts
+checkpoints/
+logs/
+wandb/
+*.pt
+*.pth
+*.npy
+*.npz
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Large files (keep data in submodule)
+*.bin
+*.safetensors
+
+NLP_Progress_Report.pdf
