@@ -1,0 +1,9 @@
+[project]
+name = "tool-calling-lm"
+version = "0.1.0"
+description = "A small decoder-only Transformer trained to map natural-language queries to structured tool calls, built from scratch in NumPy."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=2.2.6",
+]

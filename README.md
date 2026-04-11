@@ -9,7 +9,7 @@ A small decoder-only Transformer trained to map natural-language queries to stru
 ### 1. Clone with data
 
 ```bash
-git clone --recurse-submodules https://github.com/<your-username>/tool-calling-LM.git
+git clone --recurse-submodules https://github.com/paudelnirajan/tool-calling-LM.git
 cd tool-calling-LM
 ```
 
@@ -19,10 +19,39 @@ If you already cloned without `--recurse-submodules`:
 git submodule update --init --recursive
 ```
 
-### 2. Verify the dataset
+### 2. Install dependencies
+
+This project uses [uv](https://docs.astral.sh/uv/) for dependency management.
 
 ```bash
-python data_repo/data_generation/check_dataset.py
+# Install uv (if you don't have it)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Install all dependencies from the lock file
+uv sync
+```
+
+### 3. Train the model
+
+```bash
+# Small config (~1.2M params) — good for a first run
+uv run python training/train.py --config small
+
+# Medium config (~2.5M params)
+uv run python training/train.py --config medium
+
+# Large config (~4.7M params)
+uv run python training/train.py --config large
+```
+
+### 4. Train on Google Colab
+
+```python
+!pip install uv
+!git clone --recurse-submodules https://github.com/paudelnirajan/tool-calling-LM.git
+%cd tool-calling-LM
+!uv sync
+!uv run python training/train.py --config small
 ```
 
 ## Dataset
@@ -32,4 +61,3 @@ The dataset is maintained by [Gunabhiram Aruru](https://github.com/AruruGunabhir
 - **10,000 examples** — balanced across 7 tools + NO_CALL
 - **Format:** `{input_text, target_text}` sequences ready for training
 - **Split:** 8,000 train / 1,000 val / 1,000 test
-
