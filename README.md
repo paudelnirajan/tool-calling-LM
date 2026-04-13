@@ -28,7 +28,7 @@ This project uses [uv](https://docs.astral.sh/uv/) for dependency management.
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Install all dependencies from the lock file
-uv sync
+
 ```
 
 ### 3. Train the model

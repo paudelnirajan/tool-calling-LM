@@ -19,27 +19,36 @@ def sinusoidal_encoding(max_len, d_model):
     return pe
 
 
-def cross_entropy_loss(logits, targets):
+def cross_entropy_loss(logits, targets, mask=None):
     """
     Args:
         logits:  Tensor of shape (B, T, V)  — raw model output
         targets: np.ndarray of shape (B, T)  — integer token IDs
+        mask:    np.ndarray of shape (B, T)  — 1.0 for positions to include
+                 in the loss, 0.0 for positions to ignore (padding / prompt).
+                 If None, all positions are included.
 
     Returns:
-        Scalar Tensor (the mean loss).
+        Scalar Tensor (the mean loss over unmasked positions).
     """
     B, T, V = logits.shape
+
+    if mask is None:
+        mask = np.ones((B, T), dtype=np.float32)
 
     # Numerically stable softmax
     shifted = logits.data - logits.data.max(axis=-1, keepdims=True)
     probs = np.exp(shifted)
     probs /= probs.sum(axis=-1, keepdims=True)
 
-    # Negative log-likelihood
+    # Negative log-likelihood (masked)
     flat_p = probs.reshape(-1, V)
     flat_t = targets.reshape(-1)
-    N = flat_t.shape[0]
-    loss_val = -np.log(flat_p[np.arange(N), flat_t] + 1e-9).mean()
+    flat_m = mask.reshape(-1).astype(np.float32)
+    N = max(float(flat_m.sum()), 1.0)
+
+    per_token_loss = -np.log(flat_p[np.arange(flat_t.shape[0]), flat_t] + 1e-9)
+    loss_val = (per_token_loss * flat_m).sum() / N
 
     loss = Tensor(np.array(loss_val), _children=(logits,), _op="ce")
     loss.requires_grad = True
@@ -49,7 +58,8 @@ def cross_entropy_loss(logits, targets):
         if logits.grad is not None:
             g = probs.copy()
             g_flat = g.reshape(-1, V)
-            g_flat[np.arange(N), flat_t] -= 1.0
+            g_flat[np.arange(flat_t.shape[0]), flat_t] -= 1.0
+            g_flat *= flat_m[:, None]   # zero out masked positions
             g_flat /= N
             logits.grad += g  # loss.grad is 1.0 (scalar)
 

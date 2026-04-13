@@ -8,9 +8,16 @@ Usage:
 
 import argparse
 import json
+import sys
 import time
 import numpy as np
 from pathlib import Path
+
+# Ensure the project root is on sys.path so imports work when running
+# this script directly (e.g. `python training/train.py`).
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 # project imports
 from configs import load_config, print_config
@@ -28,22 +35,40 @@ def load_sequences(path):
 
 def prepare_batch(examples, tokenizer, max_len):
     """
-    Tokenize a list of examples and return padded input/target arrays.
+    Tokenize a list of examples and return padded input/target/mask arrays.
 
     For each example the full sequence is:
         input_text + " " + target_text + <EOS>
 
     We train autoregressively: input = seq[:-1], target = seq[1:]
+    The mask is 1.0 only for output positions (after <CALL>) so the loss
+    is computed only on the tool-call generation, not the prompt or padding.
     """
-    input_ids, target_ids = [], []
+    input_ids, target_ids, masks = [], [], []
+    call_id = tokenizer.token2id["<CALL>"]
 
     for ex in examples:
         full = ex["input_text"] + " " + ex["target_text"]
         ids = tokenizer.encode(full, add_eos=True)
         if len(ids) > max_len:
             ids = ids[:max_len]
-        input_ids.append(ids[:-1])
-        target_ids.append(ids[1:])
+
+        inp_i = ids[:-1]
+        tgt_i = ids[1:]
+
+        # Build mask: 1.0 for positions after <CALL> in inp (the output tokens)
+        m = np.zeros(len(tgt_i), dtype=np.float32)
+        # Find last occurrence of <CALL> in the input sequence
+        call_positions = [j for j, tid in enumerate(inp_i) if tid == call_id]
+        if call_positions:
+            start = call_positions[-1]  # position of <CALL> in inp
+            m[start:] = 1.0             # tgt[start] is the first output token
+        else:
+            m[:] = 1.0  # fallback: include everything if <CALL> not found
+
+        input_ids.append(inp_i)
+        target_ids.append(tgt_i)
+        masks.append(m)
 
     # Pad to the longest sequence in this batch
     max_t = max(len(s) for s in input_ids)
@@ -51,12 +76,14 @@ def prepare_batch(examples, tokenizer, max_len):
 
     inp = np.full((len(examples), max_t), pad, dtype=np.int64)
     tgt = np.full((len(examples), max_t), pad, dtype=np.int64)
+    mask = np.zeros((len(examples), max_t), dtype=np.float32)
 
-    for i, (x, y) in enumerate(zip(input_ids, target_ids)):
+    for i, (x, y, m) in enumerate(zip(input_ids, target_ids, masks)):
         inp[i, : len(x)] = x
         tgt[i, : len(y)] = y
+        mask[i, : len(m)] = m
 
-    return inp, tgt
+    return inp, tgt, mask
 
 
 def batches(data, batch_size, tokenizer, max_len, shuffle=True):
@@ -142,12 +169,12 @@ def train(config_name="small"):
         n_batches = 0
         t0 = time.time()
 
-        for inp, tgt in batches(train_data, tcfg["batch_size"], tokenizer, mcfg["max_seq_len"]):
+        for inp, tgt, mask in batches(train_data, tcfg["batch_size"], tokenizer, mcfg["max_seq_len"]):
             # Forward
             logits = model(inp)
 
-            # Mask out padding from loss
-            loss = cross_entropy_loss(logits, tgt)
+            # Loss only on output tokens (after <CALL>), padding excluded
+            loss = cross_entropy_loss(logits, tgt, mask=mask)
 
             # Backward
             model.zero_grad()
@@ -169,9 +196,9 @@ def train(config_name="small"):
 
         val_loss = 0.0
         val_batches = 0
-        for inp, tgt in batches(val_data, tcfg["batch_size"], tokenizer, mcfg["max_seq_len"], shuffle=False):
+        for inp, tgt, mask in batches(val_data, tcfg["batch_size"], tokenizer, mcfg["max_seq_len"], shuffle=False):
             logits = model(inp)
-            loss = cross_entropy_loss(logits, tgt)
+            loss = cross_entropy_loss(logits, tgt, mask=mask)
             val_loss += float(loss.data)
             val_batches += 1
         avg_val_loss = val_loss / max(val_batches, 1)
