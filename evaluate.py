@@ -15,6 +15,7 @@ Usage:
 
 import argparse
 import json
+import math
 import sys
 import time
 import numpy as np
@@ -25,6 +26,7 @@ _ROOT = Path(__file__).resolve().parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from backend import set_backend, from_numpy, to_numpy, print_backend_info
 from configs import load_config
 from model.transformer import ToolCallingLM
 from training.tokenizer import Tokenizer, _tokenize_text
@@ -48,9 +50,9 @@ def load_model_and_tokenizer(config_name, checkpoint_path):
     ckpt = np.load(checkpoint_path)
     params = model.parameters()
     for i, p in enumerate(params):
-        p.data = ckpt[f"p{i}"]
+        p.data = from_numpy(ckpt[f"p{i}"])   # move to active device
 
-    n_params = sum(p.data.size for p in params)
+    n_params = sum(math.prod(p.data.shape) for p in params)
     print(f"Loaded model: {n_params:,} parameters, vocab {tokenizer.vocab_size}")
     return model, tokenizer, cfg
 
@@ -150,15 +152,18 @@ def compute_perplexity(model, tokenizer, test_data, cfg):
         logits = model(inp)
         B, T, V = logits.data.shape
 
+        # Convert to numpy for numerically stable softmax
+        logits_np = to_numpy(logits.data)
+
         # Softmax (no autograd needed)
-        shifted = logits.data - logits.data.max(axis=-1, keepdims=True)
+        shifted = logits_np - logits_np.max(axis=-1, keepdims=True)
         probs = np.exp(shifted)
         probs /= probs.sum(axis=-1, keepdims=True)
 
         # Per-token NLL
         flat_p = probs.reshape(-1, V)
-        flat_t = tgt.reshape(-1)
-        flat_m = mask.reshape(-1)
+        flat_t = np.asarray(tgt).reshape(-1)
+        flat_m = np.asarray(mask).reshape(-1)
         nll = -np.log(flat_p[np.arange(flat_t.shape[0]), flat_t] + 1e-9)
 
         total_loss += (nll * flat_m).sum()
@@ -302,7 +307,15 @@ def main():
         default=10,
         help="Number of sample predictions to print (default: 10)",
     )
+    parser.add_argument(
+        "--device", default="auto",
+        choices=["auto", "cpu", "cuda", "mps", "tpu"],
+        help="Device: auto (default), cpu, cuda (NVIDIA), mps (Apple), tpu (JAX)",
+    )
     args = parser.parse_args()
+
+    set_backend(args.device)
+    print_backend_info()
 
     # Load model
     ckpt_path = ROOT / args.checkpoint

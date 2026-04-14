@@ -14,6 +14,7 @@ Usage:
 
 import argparse
 import json
+import math
 import sys
 import numpy as np
 from pathlib import Path
@@ -23,6 +24,7 @@ _ROOT = Path(__file__).resolve().parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from backend import set_backend, from_numpy, print_backend_info
 from configs import load_config
 from model.transformer import ToolCallingLM
 from training.tokenizer import Tokenizer
@@ -45,9 +47,9 @@ def load_model_and_tokenizer(config_name, checkpoint_path):
     ckpt = np.load(checkpoint_path)
     params = model.parameters()
     for i, p in enumerate(params):
-        p.data = ckpt[f"p{i}"]
+        p.data = from_numpy(ckpt[f"p{i}"])   # move to active device
 
-    n_params = sum(p.data.size for p in params)
+    n_params = sum(math.prod(p.data.shape) for p in params)
     print(f"Model loaded: {n_params:,} parameters, vocab {tokenizer.vocab_size}")
     return model, tokenizer
 
@@ -116,7 +118,15 @@ def main():
         default=50,
         help="Max tokens to generate (default: 50)",
     )
+    parser.add_argument(
+        "--device", default="auto",
+        choices=["auto", "cpu", "cuda", "mps", "tpu"],
+        help="Device: auto (default), cpu, cuda (NVIDIA), mps (Apple), tpu (JAX)",
+    )
     args = parser.parse_args()
+
+    set_backend(args.device)
+    print_backend_info()
 
     ckpt_path = ROOT / args.checkpoint
     model, tokenizer = load_model_and_tokenizer(args.config, ckpt_path)

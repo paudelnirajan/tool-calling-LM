@@ -8,6 +8,7 @@ Usage:
 
 import argparse
 import json
+import math
 import sys
 import time
 import numpy as np
@@ -20,6 +21,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 # project imports
+from backend import set_backend, to_numpy, print_backend_info
 from configs import load_config, print_config
 from model.transformer import ToolCallingLM, cross_entropy_loss
 from training.tokenizer import Tokenizer
@@ -123,7 +125,9 @@ def quick_eval(model, tokenizer, val_data, n=50):
     return correct / len(sample)
 
 
-def train(config_name="small"):
+def train(config_name="small", device="auto"):
+    set_backend(device)
+    print_backend_info()
     cfg = load_config(config_name)
     print_config(cfg)
 
@@ -146,7 +150,7 @@ def train(config_name="small"):
     mcfg["vocab_size"] = tokenizer.vocab_size
 
     model = ToolCallingLM.from_config(mcfg)
-    n_params = sum(p.data.size for p in model.parameters())
+    n_params = sum(math.prod(p.data.shape) for p in model.parameters())
     print(f"  Parameters: {n_params:,}")
     optimizer = Adam(
         model.parameters(),
@@ -218,7 +222,7 @@ def train(config_name="small"):
             ckpt_dir.mkdir(exist_ok=True)
             np.savez(
                 ckpt_dir / "best_model.npz",
-                **{f"p{i}": p.data for i, p in enumerate(model.parameters())},
+                **{f"p{i}": to_numpy(p.data) for i, p in enumerate(model.parameters())},
             )
             tokenizer.save(ckpt_dir / "tokenizer.json")
             print(f"  ✓ Saved best checkpoint (val_loss={avg_val_loss:.4f})")
@@ -229,5 +233,10 @@ def train(config_name="small"):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="small", help="Config name or path")
+    parser.add_argument(
+        "--device", default="auto",
+        choices=["auto", "cpu", "cuda", "mps", "tpu"],
+        help="Device: auto (default), cpu, cuda (NVIDIA), mps (Apple), tpu (JAX)",
+    )
     args = parser.parse_args()
-    train(args.config)
+    train(args.config, device=args.device)
