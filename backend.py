@@ -54,7 +54,26 @@ except ImportError:
 # ── Globals ───────────────────────────────────────────────────────────────────
 
 _BACKEND: str = "numpy"   # "numpy" | "cupy" | "torch_mps" | "torch_cuda" | "jax"
-xp = _np                  # active array module — numpy-compatible API
+_active_backend = _np     # the real backend object — swapped by set_backend()
+
+
+class _BackendProxy:
+    """
+    Transparent proxy for the active backend.
+
+    All modules do `from backend import xp` once at import time.  They get
+    this proxy, which always forwards attribute access to `_active_backend`.
+    That means set_backend() can swap the backend at any time and every
+    module immediately sees the new one — without re-importing.
+    """
+
+    def __getattr__(self, name: str):
+        return getattr(_active_backend, name)
+
+
+# `xp` is the single, stable object exported to all other modules.
+# It never changes identity — only `_active_backend` is swapped.
+xp = _BackendProxy()
 
 
 def device_name() -> str:
@@ -105,10 +124,10 @@ def set_backend(name: str = "auto") -> None:
     Args:
         name: 'auto' | 'cpu' | 'cuda' | 'mps' | 'tpu'
     """
-    global xp, _BACKEND
+    global _active_backend, _BACKEND
 
     if name == "cpu":
-        xp, _BACKEND = _np, "numpy"
+        _active_backend, _BACKEND = _np, "numpy"
         return
 
     if name in ("cuda", "gpu"):
@@ -136,7 +155,7 @@ def set_backend(name: str = "auto") -> None:
         if _try_torch("mps"):  return   # Apple Silicon MPS
         if _try_torch("cuda"): return   # NVIDIA via PyTorch
         if _try_jax("auto"):   return   # JAX (TPU / GPU / CPU)
-        xp, _BACKEND = _np, "numpy"    # CPU fallback
+        _active_backend, _BACKEND = _np, "numpy"    # CPU fallback
         return
 
     raise ValueError(f"Unknown backend {name!r}. Use 'auto', 'cpu', 'cuda', 'mps', or 'tpu'.")
@@ -145,31 +164,31 @@ def set_backend(name: str = "auto") -> None:
 # ── Backend probes ────────────────────────────────────────────────────────────
 
 def _try_cupy() -> bool:
-    global xp, _BACKEND
+    global _active_backend, _BACKEND
     if _cupy is None:
         return False
     try:
         _cupy.array([1.0])          # confirm device is accessible
-        xp, _BACKEND = _cupy, "cupy"
+        _active_backend, _BACKEND = _cupy, "cupy"
         return True
     except Exception:
         return False
 
 
 def _try_torch(device: str) -> bool:
-    global xp, _BACKEND
+    global _active_backend, _BACKEND
     if _torch is None:
         return False
     try:
         if device == "mps":
             if not (hasattr(_torch.backends, "mps") and _torch.backends.mps.is_available()):
                 return False
-            xp = _TorchBackend("mps")
+            _active_backend = _TorchBackend("mps")
             _BACKEND = "torch_mps"
         else:   # cuda
             if not _torch.cuda.is_available():
                 return False
-            xp = _TorchBackend("cuda")
+            _active_backend = _TorchBackend("cuda")
             _BACKEND = "torch_cuda"
         return True
     except Exception:
@@ -177,7 +196,7 @@ def _try_torch(device: str) -> bool:
 
 
 def _try_jax(mode: str) -> bool:
-    global xp, _BACKEND
+    global _active_backend, _BACKEND
     if _jax is None or _jnp is None:
         return False
     try:
@@ -185,7 +204,7 @@ def _try_jax(mode: str) -> bool:
             devs = _jax.devices()
             if not any(d.platform == "tpu" for d in devs):
                 return False
-        xp = _JaxBackend()
+        _active_backend = _JaxBackend()
         _BACKEND = "jax"
         return True
     except Exception:
@@ -384,7 +403,7 @@ class _JaxBackend:
 
     def zeros_like(self, a):  return _jnp.zeros_like(a)   # type: ignore[union-attr]
     def ones_like(self, a):   return _jnp.ones_like(a)    # type: ignore[union-attr]
-    def arange(self, *args): return _jnp.arange(*args)   # type: ignore[union-attr]
+    def arange(self, *args):  return _jnp.arange(*args)   # type: ignore[union-attr]
 
     def exp(self, x):   return _jnp.exp(x)    # type: ignore[union-attr]
     def log(self, x):   return _jnp.log(x)    # type: ignore[union-attr]
@@ -428,8 +447,8 @@ set_backend("auto")
 
 def print_backend_info():
     """Print which backend is active."""
-    name = xp.__name__ if hasattr(xp, "__name__") else type(xp).__name__
-    print(f"Backend: {_BACKEND}  |  device: {device_name()}  |  xp: {name}")
+    backend_name = type(_active_backend).__name__ if _BACKEND != "numpy" else "numpy"
+    print(f"Backend: {_BACKEND}  |  device: {device_name()}  |  xp: {backend_name}")
 
 
 if __name__ == "__main__":
